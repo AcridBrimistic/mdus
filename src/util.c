@@ -1,16 +1,9 @@
 /*
  * util.c
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <pthread.h>
 #include <stdatomic.h>
 
-#include <event2/buffer.h>
-
-#include "util.h"
+#include "mdus.h"
 
 static const char *usage_msg =
 "Usage: mdus [OPTION]...\n\n"
@@ -51,13 +44,8 @@ void init_session_logging(void) {
 }
 
 void record_exchange(bool is_request, size_t bytes) {
-    if (is_request) {
-        atomic_fetch_add(&stats.requests, 1);
-        atomic_fetch_add(&stats.received, bytes);
-    } else {
-        atomic_fetch_add(&stats.responses, 1);
-        atomic_fetch_add(&stats.sent, bytes);
-    }
+    atomic_fetch_add(is_request ? &stats.requests : &stats.responses, 1);
+    atomic_fetch_add(is_request ? &stats.received : &stats.sent, bytes);
 }
 
 void on_timeout(int, short, void *) {

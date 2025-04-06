@@ -3,32 +3,15 @@
  */
 
 #include <dirent.h>
-#include <errno.h>
-#include <pthread.h>
 #include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 #include <getopt.h>
 
 #include <sys/stat.h>
 
-#include <event2/event.h>
-#include <event2/thread.h>
-#include <event2/http.h>
-
-#include "util.h"
 #include "mdus.h"
-#include "main.h"
 
 #define SERVER_ADDRESS    "localhost"
-#define DEFAULT_PORT      80
 #define DEFAULT_POOL_SIZE 7
-#define DEFAULT_WORKING_DIRECTORY "/srv/mdus/"
-
-char *working_directory = DEFAULT_WORKING_DIRECTORY;
-size_t working_directory_len = 0;
 
 int pool_ready_count = 0;
 bool quit_requested = false;
@@ -40,8 +23,6 @@ pthread_mutex_t pool_ready_lock        = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  pool_ready_cond        = PTHREAD_COND_INITIALIZER;
 
 static int pool_size = DEFAULT_POOL_SIZE;
-static int port      = DEFAULT_PORT;
-static int hbtime  = 120;
 
 static inline int is_pool_ready();
 static inline void apply_configuration(int argc, char **argv);
@@ -59,8 +40,8 @@ int main(int argc, char **argv) {
     struct event *timer_event;
     struct timeval timer_timeout;
 
+    parse_config();
     apply_configuration(argc, argv);
-    working_directory_len = strlen(working_directory);
     evthread_use_pthreads();
 
     MDUS_INFO("starting server setup\n");
@@ -73,8 +54,8 @@ int main(int argc, char **argv) {
 
     sigint_event = evsignal_new(base, SIGINT, handle_signal, base);
     sigterm_event = evsignal_new(base, SIGTERM, handle_signal, base);
-    if (hbtime != -1) {
-        timer_timeout.tv_sec = hbtime;
+    if (opts.hbtime != -1) {
+        timer_timeout.tv_sec = opts.hbtime;
         timer_timeout.tv_usec = 0;
         timer_event = event_new(base, -1, EV_PERSIST, on_timeout, NULL);
         evtimer_add(timer_event, &timer_timeout);
@@ -84,12 +65,12 @@ int main(int argc, char **argv) {
     init_session_logging();
     MDUS_OK();
 
-    MDUS_INFO("creating and binding server (%s:%d)... ", SERVER_ADDRESS, port);
+    MDUS_INFO("creating and binding server (%s:%d)... ", SERVER_ADDRESS, opts.port);
     if ((server = evhttp_new(base)) == NULL) {
         MDUS_ERR("failed to instantiate server\n");
         return -1;
     }
-    if (evhttp_bind_socket(server, SERVER_ADDRESS, port) == -1) {
+    if (evhttp_bind_socket(server, SERVER_ADDRESS, opts.port) == -1) {
         MDUS_ERR("failed to bind to socket (are you using port 80 as non-superuser?)\n");
         return -1;
     }
@@ -118,7 +99,7 @@ int main(int argc, char **argv) {
     MDUS_OK();
 
     MDUS_INFO("finishing server cleanup... ");
-		if (strcmp(working_directory, DEFAULT_WORKING_DIRECTORY)) free(working_directory);
+	if (strcmp(opts.working_directory, DEFAULT_WORKING_DIRECTORY)) free(opts.working_directory);
     evhttp_free(server);
     event_free(sigint_event);
     event_free(sigterm_event);
@@ -154,33 +135,33 @@ static inline void apply_configuration(int argc, char **argv) {
                     MDUS_WARN("invalid argument for --hbtime, using default");
                     break;
                 }
-                hbtime = h;
+                opts.hbtime = h;
                 break;
             case 'd':
-                DIR *d = opendir(working_directory);
-								if (!d) {
-										MDUS_ERR("working directory %s doesn't exist or has insufficient permissions\n", working_directory);
-										exit(-1);
-								}
-								closedir(d);
+                DIR *d = opendir(opts.working_directory);
+                if (!d) {
+                        MDUS_ERR("working directory %s doesn't exist or has insufficient permissions\n", opts.working_directory);
+                        exit(-1);
+                }
+                closedir(d);
 
-								if (strcmp(working_directory, optarg))
-										working_directory = strndup(optarg, 256);
+                if (strcmp(opts.working_directory, optarg))
+                        opts.working_directory = strndup(optarg, 256);
 
-								if (chdir(working_directory)) {
-										MDUS_ERR("working directory %s cannot be used\n", working_directory);
-										exit(-1);
-								}
+                if (chdir(opts.working_directory)) {
+                        MDUS_ERR("working directory %s cannot be used\n", opts.working_directory);
+                        exit(-1);
+                }
 
-								MDUS_INFO("game saves will be located at %s/files\n", working_directory);
-								int fld = mkdir("files", S_IRWXU | S_IRWXG);
-								if (fld == EEXIST) break;
-								else if (!fld) MDUS_INFO("(directory %s/files was created)\n", working_directory);
-								else {
-									MDUS_ERR("cannot use or create directory %s/files\n", working_directory);
-									free(working_directory);
-									exit(-1);
-								}
+                MDUS_INFO("game saves will be located at %s/files\n", opts.working_directory);
+                int fld = mkdir("files", S_IRWXU | S_IRWXG);
+                if (fld == EEXIST) break;
+                else if (!fld) MDUS_INFO("(directory %s/files was created)\n", opts.working_directory);
+                else {
+                    MDUS_ERR("cannot use or create directory %s/files\n", opts.working_directory);
+                    free(opts.working_directory);
+                    exit(-1);
+                }
                 break;
             case 'h':
                 print_usage();
@@ -194,7 +175,7 @@ static inline void apply_configuration(int argc, char **argv) {
                     }
                     if (p < 1024 && geteuid())
                         MDUS_WARN("using port number below 1024 as non-superuser\n");
-                    port = p;
+                    opts.port = p;
                 break;
             case 't':
                 int t = atoi(optarg);
